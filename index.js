@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 5000;
@@ -8,6 +9,22 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+function verifyJWT(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).send({ massage: 'unauthorize access' });
+  }
+  const token = authHeader.split(' ')[1];
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(403).send({ massage: 'forbidden access' })
+    }
+    console.log('decoded', decoded)
+    req.decoded = decoded;
+    next();
+  })
+  
+}
 
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const res = require('express/lib/response');
@@ -18,6 +35,18 @@ async function run() {
   try {
     await client.connect();
     const serviceCollection = client.db('genius-car').collection('services');
+    const orderCollection = client.db('genius-car').collection('order');
+
+    //Auth 
+    app.post('/login', async (req, res) => {
+      const user = req.body;
+      const accessToken = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: '1d',
+      })
+      res.send({ accessToken });
+    })
+
+    //services Api
 
     app.get('/service', async (req, res) => {
       const query = {};
@@ -39,7 +68,7 @@ async function run() {
       res.send(result);
     })
     //delete
-    app.delete('/service/:id', async(req, res) => {
+    app.delete('/service/:id', async (req, res) => {
       const id = req.params.id;
       console.log(id);
       const query = { _id: ObjectId(id) };
@@ -47,7 +76,28 @@ async function run() {
       res.send(result);
     })
 
-    
+    //order collection Api
+
+    app.get('/order', verifyJWT, async (req, res) => {
+      const decodedEmail = req.decoded.email;
+      const email = req.query.email;
+      if (email === decodedEmail) {
+        const query = { email: email };
+        const cursor = orderCollection.find(query);
+        const orders = await cursor.toArray();
+        res.send(orders);
+      }
+      else{
+        res.status(403).send({ massage: 'forbidden access' })
+      }
+    })
+    app.post('/order', async (req, res) => {
+      const order = req.body;
+      const result = await orderCollection.insertOne(order);
+      res.send(result);
+    })
+
+
   }
   finally {
 
@@ -56,9 +106,15 @@ async function run() {
 run().catch(console.dir);
 
 
+
+
 app.get('/', (req, res) => {
   res.send('running genius server');
 });
+
+app.get('/hero', (req, res)=>{
+  res.send('hero meets')
+})
 app.listen(port, () => {
   console.log('Listening to port', port);
 })
